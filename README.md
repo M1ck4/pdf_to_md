@@ -51,15 +51,15 @@ pip install pymupdf
 3. **Download the script**:
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/pdf-to-markdown.git
-cd pdf-to-markdown
+git clone https://github.com/yourusername/pdf_to_md.git
+cd pdf_to_md
 
-# Or download pdf_to_md_v2.py directly
+# Or download pdf_to_md.py directly
 ```
 
 4. **Run the application**:
 ```bash
-python pdf_to_md_v2.py
+python pdf_to_md.py
 ```
 
 ### Option 2: Windows Executable (No Python Required)
