@@ -158,8 +158,6 @@ This is a paragraph that wraps across multiple lines in the PDF file.
 **Version:** [v1.0.0](https://github.com/M1ck4/pdf_to_md/releases/tag/v1.0.0)
 **Released:** November 2025
 
-A one-click desktop tool that converts PDFs into structured Markdown for Obsidian and beyond.
-
 **SHA-256 checksum:**
 `E4FE880E1A00494D31255328A45225118ACF0085BB99C0867C74DF9881B1F085`
 
