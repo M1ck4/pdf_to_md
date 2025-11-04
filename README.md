@@ -6,6 +6,10 @@ A powerful, single-file GUI application that converts PDFs to clean, well-format
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
+## 📸 Screenshot
+
+![PDF to Markdown Converter Interface](doc/Screenshot%202025-11-04%20140238.png)
+
 ## ✨ Features
 
 ### Smart Text Processing
