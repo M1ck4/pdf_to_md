@@ -1,10 +1,12 @@
-"""Command‑line interface for pdfmd.
+"""Command-line interface for pdfmd.
 
 Usage examples:
-  pdfmd input.pdf                 # writes input.md next to PDF
-  pdfmd input.pdf -o notes.md     # choose output path
-  pdfmd input.pdf --ocr auto      # auto‑detect scanned; use OCR if needed
+  pdfmd input.pdf                         # writes input.md next to PDF
+  pdfmd input.pdf -o notes.md             # choose output path
+  pdfmd input.pdf --ocr auto              # auto-detect scanned; use OCR if needed
   pdfmd input.pdf --ocr tesseract --export-images --page-breaks
+  pdfmd input.pdf --callouts              # convert 'Note:/Warning:' blocks to callouts
+  pdfmd input.pdf --nb-abbrev "i. e.,z. B.,u. a."  # protect multilingual abbrev splits
 
 Exit codes: 0 on success, 1 on error.
 """
@@ -27,7 +29,6 @@ except ImportError:
     from pipeline import pdf_to_markdown
 
 
-
 OCR_CHOICES = ("off", "auto", "tesseract", "ocrmypdf")
 
 
@@ -45,29 +46,50 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("input", help="input PDF file")
     p.add_argument("-o", "--output", help="output Markdown path (.md)")
 
+    # Core pipeline
     p.add_argument("--ocr", choices=OCR_CHOICES, default="off", help="OCR mode (default: off)")
     p.add_argument("--preview", action="store_true", help="process only first 3 pages")
 
-    p.add_argument("--export-images", action="store_true", help="export page images to <output>_assets/")
-    p.add_argument("--page-breaks", action="store_true", help="insert '---' between pages")
+    # Output features
+    p.add_argument("--export-images", action="store_true",
+                   help="export page images to <output>_assets/")
+    p.add_argument("--page-breaks", action="store_true",
+                   help="insert '---' between pages")
 
-    p.add_argument("--keep-edges", action="store_true", help="keep repeating headers/footers (do not remove)")
-    p.add_argument("--no-caps-to-headings", dest="caps_to_headings", action="store_false", help="do not promote ALL‑CAPS to headings")
+    # Transform toggles
+    p.add_argument("--keep-edges", action="store_true",
+                   help="keep repeating headers/footers (do not remove)")
+    p.add_argument("--no-caps-to-headings", dest="caps_to_headings", action="store_false",
+                   help="do not promote ALL-CAPS to headings")
     p.set_defaults(caps_to_headings=True)
 
-    p.add_argument("--no-defrag", dest="defragment", action="store_false", help="disable orphan defragment")
+    p.add_argument("--no-defrag", dest="defragment", action="store_false",
+                   help="disable orphan defragment")
     p.set_defaults(defragment=True)
 
-    p.add_argument("--heading-ratio", type=float, default=1.15, help="= body x ratio -> heading (default: 1.15)")
+    p.add_argument("--heading-ratio", type=float, default=1.15,
+                   help="= body x ratio -> heading (default: 1.15)")
     p.add_argument("--orphan-max-len", "--orphan-len", dest="orphan_max_len", type=int, default=45,
                    help="max length (chars) of orphan to merge (default: 45)")
 
+    # New reflow knobs
     p.add_argument("--aggressive-hyphen", action="store_true",
                    help="unwrap TitleCase hyphenation too (joins more words)")
     p.add_argument("--no-protect-code-blocks", dest="protect_code_blocks", action="store_false",
                    help="allow unwrap/reflow inside fenced code blocks")
     p.set_defaults(protect_code_blocks=True)
 
+    # Callouts + multilingual abbreviation safety
+    p.add_argument("--callouts", dest="enable_callouts", action="store_true",
+                   help="convert 'Label:\\nBody' blocks (e.g., 'Note:') to Obsidian callouts")
+    p.add_argument("--no-callouts", dest="enable_callouts", action="store_false",
+                   help="disable callout conversion")
+    p.set_defaults(enable_callouts=True)
+
+    p.add_argument("--nb-abbrev", metavar="LIST",
+                   help="comma-separated non-breaking abbreviations (e.g., 'i. e.,z. B.,u. a.')")
+
+    # UX
     p.add_argument("--quiet", action="store_true", help="suppress log output")
     p.add_argument("--no-progress", action="store_true", help="suppress progress bar")
     return p
@@ -86,6 +108,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     outp = _derive_output_path(inp, args.output)
 
+    # Construct options with fields known to exist today.
     opts = Options(
         ocr_mode=args.ocr,
         preview_only=bool(args.preview),
@@ -100,6 +123,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         protect_code_blocks=bool(args.protect_code_blocks),
     )
 
+    # Set optional, forward-compatible fields dynamically (safe even if Options
+    # doesn't declare them yet; they'll be ignored unless the pipeline uses them).
+    try:
+        opts.enable_callouts = bool(args.enable_callouts)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    if args.nb_abbrev:
+        try:
+            opts.non_breaking_abbrevs = [s.strip() for s in args.nb_abbrev.split(",") if s.strip()]  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
     def log_cb(msg: str):
         if not args.quiet:
             print(msg)
@@ -107,7 +143,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     def progress_cb(done: int, total: int):
         if args.no_progress:
             return
-        # Simple single‑line progress bar on stderr
+        # Simple single-line progress bar on stderr
         pct = 0
         try:
             if total > 0:
