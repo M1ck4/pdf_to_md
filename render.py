@@ -5,7 +5,7 @@ It assumes header/footer removal and drop-cap stripping have already been run
 (see `transform.py`).
 
 Main entry: `render_document(pages, options, body_sizes=None, progress_cb=None)`
-- Applies heading promotion via size and optional ALL‑CAPS heuristics.
+- Applies heading promotion via size and optional ALL-CAPS heuristics.
 - Normalizes bullets/numbered lists.
 - Repairs hyphenation and unwraps hard line breaks into paragraphs.
 - Optionally inserts `---` page break markers.
@@ -21,7 +21,9 @@ from .models import PageText, Block, Line, Span, Options
 from .utils import normalize_punctuation, linkify_urls, escape_markdown
 from .transform import is_all_caps_line, is_mostly_caps
 
+
 # ------------------------------- Inline wraps -------------------------------
+
 
 def _wrap_inline(text: str, bold: bool, italic: bool) -> str:
     if not text.strip():
@@ -36,6 +38,7 @@ def _wrap_inline(text: str, bold: bool, italic: bool) -> str:
 
 
 # ---------------------------- Line/para utilities ----------------------------
+
 
 def _fix_hyphenation(text: str) -> str:
     # remove hyphen + newline breaks introduced by column wraps
@@ -92,9 +95,50 @@ def _defragment_orphans(md: str, max_len: int = 45) -> str:
     return "\n".join(res)
 
 
+# ------------------------- Span joining (word-safe) -------------------------
+
+
+def _safe_join_texts(parts: List[str]) -> str:
+    """Join span texts while preserving word boundaries.
+
+    We only inject a space when concatenating would otherwise merge two
+    alphanumeric characters from adjacent spans (e.g. "Hello" + "world"
+    → "Hello world"). Existing whitespace at boundaries is respected.
+    """
+    if not parts:
+        return ""
+    out: List[str] = [parts[0]]
+    for t in parts[1:]:
+        if not t:
+            continue
+        prev = out[-1]
+        prev_last = prev[-1] if prev else ""
+        cur_first = t[0]
+
+        if (
+            prev_last
+            and cur_first
+            and not prev_last.isspace()
+            and not cur_first.isspace()
+            and prev_last.isalnum()
+            and cur_first.isalnum()
+        ):
+            # Insert a space to avoid merging words
+            out.append(" " + t)
+        else:
+            out.append(t)
+    return "".join(out)
+
+
 # ------------------------------ Block → lines ------------------------------
 
-def _block_to_lines(block: Block, body_size: float, caps_to_headings: bool, heading_size_ratio: float) -> List[str]:
+
+def _block_to_lines(
+    block: Block,
+    body_size: float,
+    caps_to_headings: bool,
+    heading_size_ratio: float,
+) -> List[str]:
     rendered_lines: List[str] = []
     line_sizes: List[float] = []
 
@@ -109,7 +153,8 @@ def _block_to_lines(block: Block, body_size: float, caps_to_headings: bool, head
             texts.append(t)
             if sp.size:
                 sizes.append(float(sp.size))
-        joined = "".join(texts)
+
+        joined = _safe_join_texts(texts)
         if joined.strip():
             rendered_lines.append(joined)
             if sizes:
@@ -123,7 +168,10 @@ def _block_to_lines(block: Block, body_size: float, caps_to_headings: bool, head
 
     # Heading heuristics: size and/or caps
     heading_by_size = avg_line_size >= body_size * heading_size_ratio
-    heading_by_caps = caps_to_headings and (is_all_caps_line(block_text.replace("\n", " ")) or is_mostly_caps(block_text))
+    heading_by_caps = caps_to_headings and (
+        is_all_caps_line(block_text.replace("\n", " "))
+        or is_mostly_caps(block_text)
+    )
 
     if heading_by_size or heading_by_caps:
         level = 1 if (avg_line_size >= body_size * 1.6) or heading_by_caps else 2
@@ -162,9 +210,17 @@ def _block_to_lines(block: Block, body_size: float, caps_to_headings: bool, head
 
 
 # ------------------------------ Document render ------------------------------
+
+
 DefProgress = Optional[Callable[[int, int], None]]
 
-def render_document(pages: List[PageText], options: Options, body_sizes: Optional[List[float]] = None, progress_cb: DefProgress = None) -> str:
+
+def render_document(
+    pages: List[PageText],
+    options: Options,
+    body_sizes: Optional[List[float]] = None,
+    progress_cb: DefProgress = None,
+) -> str:
     """Render transformed pages to a Markdown string.
 
     Args:
@@ -180,12 +236,14 @@ def render_document(pages: List[PageText], options: Options, body_sizes: Optiona
     for i, page in enumerate(pages):
         body = body_sizes[i] if body_sizes and i < len(body_sizes) else 11.0
         for blk in page.blocks:
-            md_lines.extend(_block_to_lines(
-                blk,
-                body_size=body,
-                caps_to_headings=options.caps_to_headings,
-                heading_size_ratio=options.heading_size_ratio,
-            ))
+            md_lines.extend(
+                _block_to_lines(
+                    blk,
+                    body_size=body,
+                    caps_to_headings=options.caps_to_headings,
+                    heading_size_ratio=options.heading_size_ratio,
+                )
+            )
         if options.insert_page_breaks and i < total - 1:
             md_lines.extend(["---", ""])  # page rule
         if progress_cb:
