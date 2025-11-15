@@ -5,28 +5,36 @@ It assumes header/footer removal and drop-cap stripping have already been run
 (see `transform.py`).
 
 Main entry: `render_document(pages, options, body_sizes=None, progress_cb=None)`
-- Applies heading promotion via size and optional ALL-CAPS heuristics.
-- Normalizes bullets/numbered lists.
+
+Key behaviours:
+- Applies heading promotion via font size and optional CAPS heuristics.
+- Normalizes bullets and numbered lists to proper Markdown formats.
 - Repairs hyphenation and unwraps hard line breaks into paragraphs.
-- Optionally inserts `---` page break markers.
-- Defragments short orphan lines.
+- Optionally inserts `---` page break markers between pages.
+- Defragments short orphan lines into their preceding paragraphs.
 """
+
 from __future__ import annotations
 
 import re
 from statistics import median
-from typing import List, Optional, Callable
+from typing import Callable, List, Optional
 
-from .models import PageText, Block, Line, Span, Options
+from .models import Block, Line, PageText, Options
 from .utils import normalize_punctuation, linkify_urls, escape_markdown
 from .transform import is_all_caps_line, is_mostly_caps
 
 
-# ------------------------------- Inline wraps -------------------------------
+# ---------------------------------------------------------------------------
+# Inline helpers
+# ---------------------------------------------------------------------------
 
 
 def _wrap_inline(text: str, bold: bool, italic: bool) -> str:
-    """Wrap text in Markdown bold/italic markers."""
+    """Wrap text in Markdown bold/italic markers, if any.
+
+    Assumes `text` has already been escaped with `escape_markdown`.
+    """
     if not text.strip():
         return text
     if bold and italic:
@@ -38,16 +46,31 @@ def _wrap_inline(text: str, bold: bool, italic: bool) -> str:
     return text
 
 
-# ---------------------------- Line/para utilities ----------------------------
+# ---------------------------------------------------------------------------
+# Line / paragraph utilities
+# ---------------------------------------------------------------------------
 
 
 def _fix_hyphenation(text: str) -> str:
-    """Repair line-wrap hyphenation: '-\\n' → '' where it is clearly a wrap."""
+    """Repair line-wrap hyphenation.
+
+    Typical case in PDFs:
+        'hy-\nphen' → 'hyphen'
+
+    We only remove hyphen + newline when it is clearly a wrap.
+    """
     return re.sub(r"-\n(\s*)", r"\1", text)
 
 
 def _unwrap_hard_breaks(lines: List[str]) -> str:
-    """Merge wrapped lines into paragraphs. Blank lines remain paragraph breaks."""
+    """Merge wrapped lines into paragraphs. Blank lines remain paragraph breaks.
+
+    Rules:
+    - Consecutive non-blank lines are joined with spaces.
+    - Blank lines are preserved as paragraph separators.
+    - Lines ending with two spaces `"  "` are treated as explicit hard breaks
+      (Markdown convention) and terminate the paragraph.
+    """
     out: List[str] = []
     buf: List[str] = []
 
@@ -63,7 +86,6 @@ def _unwrap_hard_breaks(lines: List[str]) -> str:
             out.append("")
             continue
 
-        # Two trailing spaces force a hard break in Markdown – respect it.
         if line.endswith("  "):
             buf.append(line.rstrip())
             flush()
@@ -75,7 +97,16 @@ def _unwrap_hard_breaks(lines: List[str]) -> str:
 
 
 def _defragment_orphans(md: str, max_len: int = 45) -> str:
-    """Merge short orphan lines surrounded by blank lines into previous paragraph."""
+    """Merge short orphan lines into the previous paragraph.
+
+    An orphan is:
+    - A non-empty line,
+    - Surrounded by blank lines,
+    - Shorter than or equal to `max_len`,
+    - Not a heading.
+
+    These often come from center titles, section labels, etc.
+    """
     lines = md.splitlines()
     res: List[str] = []
     i = 0
@@ -106,7 +137,9 @@ def _defragment_orphans(md: str, max_len: int = 45) -> str:
     return "\n".join(res)
 
 
-# ------------------------- Span joining (word-safe) -------------------------
+# ---------------------------------------------------------------------------
+# Span joining (word-safe)
+# ---------------------------------------------------------------------------
 
 
 def _safe_join_texts(parts: List[str]) -> str:
@@ -140,7 +173,53 @@ def _safe_join_texts(parts: List[str]) -> str:
     return "".join(out)
 
 
-# ------------------------------ Block → lines ------------------------------
+# ---------------------------------------------------------------------------
+# Block → Markdown lines
+# ---------------------------------------------------------------------------
+
+
+def _is_footer_noise(line: str) -> bool:
+    """Heuristic to detect noisy footer/header artifacts.
+
+    Examples:
+        "- - 1"
+        "- - - - - - 1. 2. 3. 4."
+        "---- 2 ----"
+    """
+    s = line.strip()
+    if not s:
+        return False
+
+    # Strong signal: mostly dashes, dots, and digits
+    if re.fullmatch(r"[-\s\.0-9]+", s):
+        # Ensure there's more punctuation than digits/words
+        dash_count = s.count("-")
+        if dash_count >= 2:
+            return True
+    return False
+
+
+def _normalize_list_line(ln: str) -> str:
+    """Normalize various bullet/numbered prefixes into Markdown list syntax."""
+    s = ln.lstrip()
+    # Bullet-like prefixes
+    if re.match(r"^[•○◦·\-–—]\s+", s):
+        s = re.sub(r"^[•○◦·\-–—]\s+", "- ", s)
+        return s
+
+    # Numbered: "1. text" or "1) text"
+    m_num = re.match(r"^(\d+)[\.\)]\s+", s)
+    if m_num:
+        num = m_num.group(1)
+        s = re.sub(r"^\d+[\.\)]\s+", f"{num}. ", s)
+        return s
+
+    # Lettered outlines: "A. text" or "a) text" → bullet
+    if re.match(r"^[A-Za-z][\.\)]\s+", s):
+        s = re.sub(r"^[A-Za-z][\.\)]\s+", "- ", s)
+        return s
+
+    return ln.strip()
 
 
 def _block_to_lines(
@@ -151,13 +230,13 @@ def _block_to_lines(
 ) -> List[str]:
     """Convert a Block into a list of Markdown lines.
 
-    This function:
-    - builds two parallel views of the text:
-        * raw_lines:      plain text (no Markdown), for heading detection
-        * rendered_lines: text with inline bold/italic applied
-    - decides if the block is a heading via size / CAPS heuristics
-    - if heading: uses ONLY the first line as heading text (raw),
-      and renders remaining lines as a normal paragraph.
+    We build two parallel views:
+      - raw_lines: plain text (no Markdown), for heading detection
+      - rendered_lines: text with inline styling (bold/italic), for body output
+
+    Heading detection uses:
+      - average span font size vs body_size
+      - optional ALL-CAPS / MOSTLY-CAPS heuristic across the block
     """
     rendered_lines: List[str] = []
     raw_lines: List[str] = []
@@ -171,15 +250,14 @@ def _block_to_lines(
         sizes: List[float] = []
 
         for sp in spans:
-            # Raw text (no Markdown markup) for heading detection
-            texts_raw.append(sp.text)
+            raw_text = sp.text or ""
+            texts_raw.append(raw_text)
 
-            # Formatted text for normal paragraphs
-            t_fmt = escape_markdown(sp.text)
-            t_fmt = _wrap_inline(t_fmt, sp.bold, sp.italic)
-            texts_fmt.append(t_fmt)
+            esc = escape_markdown(raw_text)
+            esc = _wrap_inline(esc, sp.bold, sp.italic)
+            texts_fmt.append(esc)
 
-            if getattr(sp, "size", None):
+            if getattr(sp, "size", 0.0):
                 sizes.append(float(sp.size))
 
         joined_fmt = _safe_join_texts(texts_fmt)
@@ -219,34 +297,30 @@ def _block_to_lines(
         if len(rendered_lines) == 1:
             return [heading_line, ""]
 
-        # Otherwise, render remaining lines as normal paragraph text
-        para_text = _fix_hyphenation("\n".join(rendered_lines[1:]))
+        # Otherwise, render remaining lines as normal paragraph/list text
+        tail_text = _fix_hyphenation("\n".join(rendered_lines[1:]))
 
         lines: List[str] = []
-        for ln in para_text.splitlines():
-            # bullets
-            if re.match(r"^\s*([•○◦·\-–—])\s+", ln):
-                ln = re.sub(r"^\s*[•○◦·–—-]\s+", "- ", ln)
-                lines.append(ln.strip())
+        for ln in tail_text.splitlines():
+            if not ln.strip():
+                lines.append("")
                 continue
-            # numbered lists
-            m_num = re.match(r"^\s*(\d+)[\.)]\s+", ln)
-            if m_num:
-                num = m_num.group(1)
-                ln = re.sub(r"^\s*\d+[\.)]\s+", f"{num}. ", ln)
-                lines.append(ln.strip())
+
+            if _is_footer_noise(ln):
                 continue
-            # lettered outlines → simple bullets
-            if re.match(r"^\s*[A-Za-z][\.)]\s+", ln):
-                ln = re.sub(r"^\s*[A-Za-z][\.)]\s+", "- ", ln)
-                lines.append(ln.strip())
-                continue
-            lines.append(ln)
+
+            norm = _normalize_list_line(ln)
+            lines.append(norm)
 
         para = _unwrap_hard_breaks(lines)
         para = normalize_punctuation(para)
         para = linkify_urls(para)
-        return [heading_line, "", para, ""]
+
+        out: List[str] = [heading_line, ""]
+        if para.strip():
+            out.append(para)
+            out.append("")
+        return out
 
     # ----------------- Normal paragraph path -----------------
 
@@ -254,24 +328,15 @@ def _block_to_lines(
 
     lines: List[str] = []
     for ln in para_text.splitlines():
-        # bullets
-        if re.match(r"^\s*([•○◦·\-–—])\s+", ln):
-            ln = re.sub(r"^\s*[•○◦·–—-]\s+", "- ", ln)
-            lines.append(ln.strip())
+        if not ln.strip():
+            lines.append("")
             continue
-        # numbered lists
-        m_num = re.match(r"^\s*(\d+)[\.)]\s+", ln)
-        if m_num:
-            num = m_num.group(1)
-            ln = re.sub(r"^\s*\d+[\.)]\s+", f"{num}. ", ln)
-            lines.append(ln.strip())
+
+        if _is_footer_noise(ln):
             continue
-        # lettered outlines → simple bullets
-        if re.match(r"^\s*[A-Za-z][\.)]\s+", ln):
-            ln = re.sub(r"^\s*[A-Za-z][\.)]\s+", "- ", ln)
-            lines.append(ln.strip())
-            continue
-        lines.append(ln)
+
+        norm = _normalize_list_line(ln)
+        lines.append(norm)
 
     para = _unwrap_hard_breaks(lines)
     para = normalize_punctuation(para)
@@ -279,8 +344,9 @@ def _block_to_lines(
     return [para, ""]
 
 
-# ------------------------------ Document render ------------------------------
-
+# ---------------------------------------------------------------------------
+# Document render
+# ---------------------------------------------------------------------------
 
 DefProgress = Optional[Callable[[int, int], None]]
 
@@ -295,9 +361,9 @@ def render_document(
 
     Args:
         pages: transformed PageText pages
-        options: rendering options
-        body_sizes: optional per-page body-size baselines. If not provided,
-                    the renderer falls back to 11.0.
+        options: rendering options (see models.Options)
+        body_sizes: optional per-page body-size baselines.
+                    If not provided, the renderer falls back to 11.0.
         progress_cb: optional progress callback (done, total)
     """
     md_lines: List[str] = []
@@ -307,6 +373,8 @@ def render_document(
         body = body_sizes[i] if body_sizes and i < len(body_sizes) else 11.0
 
         for blk in page.blocks:
+            if blk.is_empty():
+                continue
             md_lines.extend(
                 _block_to_lines(
                     blk,
@@ -323,6 +391,7 @@ def render_document(
             progress_cb(i + 1, total)
 
     md = "\n".join(md_lines)
+    # Collapse excessive blank lines
     md = re.sub(r"\n{3,}", "\n\n", md).strip() + "\n"
 
     if options.defragment_short:
