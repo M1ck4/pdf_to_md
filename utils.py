@@ -63,9 +63,11 @@ def linkify_urls(text: str) -> str:
 
 
 def escape_markdown(text: str) -> str:
-    special = r"`*_{}[]()#+-.!|>~"
+    special = r"`*_{}#!|>~"
     table = {c: f"\\{c}" for c in special}
     return "".join(table.get(ch, ch) for ch in text)
+
+
 
 
 def truncate(text: str, limit: int = 80) -> str:

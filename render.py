@@ -26,6 +26,7 @@ from .transform import is_all_caps_line, is_mostly_caps
 
 
 def _wrap_inline(text: str, bold: bool, italic: bool) -> str:
+    """Wrap text in Markdown bold/italic markers."""
     if not text.strip():
         return text
     if bold and italic:
@@ -41,15 +42,16 @@ def _wrap_inline(text: str, bold: bool, italic: bool) -> str:
 
 
 def _fix_hyphenation(text: str) -> str:
-    # remove hyphen + newline breaks introduced by column wraps
+    """Repair line-wrap hyphenation: '-\\n' → '' where it is clearly a wrap."""
     return re.sub(r"-\n(\s*)", r"\1", text)
 
 
 def _unwrap_hard_breaks(lines: List[str]) -> str:
     """Merge wrapped lines into paragraphs. Blank lines remain paragraph breaks."""
-    out, buf = [], []
+    out: List[str] = []
+    buf: List[str] = []
 
-    def flush():
+    def flush() -> None:
         if buf:
             out.append(" ".join(buf).strip())
             buf.clear()
@@ -60,21 +62,27 @@ def _unwrap_hard_breaks(lines: List[str]) -> str:
             flush()
             out.append("")
             continue
+
+        # Two trailing spaces force a hard break in Markdown – respect it.
         if line.endswith("  "):
             buf.append(line.rstrip())
             flush()
         else:
             buf.append(line.strip())
+
     flush()
     return "\n".join(out)
 
 
 def _defragment_orphans(md: str, max_len: int = 45) -> str:
+    """Merge short orphan lines surrounded by blank lines into previous paragraph."""
     lines = md.splitlines()
-    res = []
+    res: List[str] = []
     i = 0
+
     while i < len(lines):
         line = lines[i]
+
         if (
             i > 0
             and i < len(lines) - 1
@@ -83,6 +91,7 @@ def _defragment_orphans(md: str, max_len: int = 45) -> str:
             and 0 < len(line.strip()) <= max_len
             and not line.strip().startswith("#")
         ):
+            # Attach orphan to the previous non-blank line
             j = len(res) - 1
             while j >= 0 and not res[j].strip():
                 j -= 1
@@ -90,8 +99,10 @@ def _defragment_orphans(md: str, max_len: int = 45) -> str:
                 res[j] = (res[j].rstrip() + " " + line.strip()).strip()
                 i += 2
                 continue
+
         res.append(line)
         i += 1
+
     return "\n".join(res)
 
 
@@ -101,7 +112,7 @@ def _defragment_orphans(md: str, max_len: int = 45) -> str:
 def _safe_join_texts(parts: List[str]) -> str:
     """Join span texts while preserving word boundaries.
 
-    We only inject a space when concatenating would otherwise merge two
+    We inject a space only when concatenating would otherwise merge two
     alphanumeric characters from adjacent spans (e.g. "Hello" + "world"
     → "Hello world"). Existing whitespace at boundaries is respected.
     """
@@ -123,7 +134,6 @@ def _safe_join_texts(parts: List[str]) -> str:
             and prev_last.isalnum()
             and cur_first.isalnum()
         ):
-            # Insert a space to avoid merging words
             out.append(" " + t)
         else:
             out.append(t)
@@ -139,24 +149,45 @@ def _block_to_lines(
     caps_to_headings: bool,
     heading_size_ratio: float,
 ) -> List[str]:
+    """Convert a Block into a list of Markdown lines.
+
+    This function:
+    - builds two parallel views of the text:
+        * raw_lines:      plain text (no Markdown), for heading detection
+        * rendered_lines: text with inline bold/italic applied
+    - decides if the block is a heading via size / CAPS heuristics
+    - if heading: uses ONLY the first line as heading text (raw),
+      and renders remaining lines as a normal paragraph.
+    """
     rendered_lines: List[str] = []
+    raw_lines: List[str] = []
     line_sizes: List[float] = []
 
     for line in block.lines:
         spans = line.spans
-        # assemble inline with Markdown escapes and basic style markers
-        texts: List[str] = []
+
+        texts_fmt: List[str] = []
+        texts_raw: List[str] = []
         sizes: List[float] = []
+
         for sp in spans:
-            t = escape_markdown(sp.text)
-            t = _wrap_inline(t, sp.bold, sp.italic)
-            texts.append(t)
-            if sp.size:
+            # Raw text (no Markdown markup) for heading detection
+            texts_raw.append(sp.text)
+
+            # Formatted text for normal paragraphs
+            t_fmt = escape_markdown(sp.text)
+            t_fmt = _wrap_inline(t_fmt, sp.bold, sp.italic)
+            texts_fmt.append(t_fmt)
+
+            if getattr(sp, "size", None):
                 sizes.append(float(sp.size))
 
-        joined = _safe_join_texts(texts)
-        if joined.strip():
-            rendered_lines.append(joined)
+        joined_fmt = _safe_join_texts(texts_fmt)
+        joined_raw = _safe_join_texts(texts_raw)
+
+        if joined_fmt.strip():
+            rendered_lines.append(joined_fmt)
+            raw_lines.append(joined_raw)
             if sizes:
                 line_sizes.append(median(sizes))
 
@@ -164,22 +195,61 @@ def _block_to_lines(
         return []
 
     avg_line_size = median(line_sizes) if line_sizes else body_size
-    block_text = "\n".join(rendered_lines).strip()
 
-    # Heading heuristics: size and/or caps
+    # Use RAW text (no ** or *) for heading heuristics
+    block_text_flat = " ".join(raw_lines).strip()
+
     heading_by_size = avg_line_size >= body_size * heading_size_ratio
     heading_by_caps = caps_to_headings and (
-        is_all_caps_line(block_text.replace("\n", " "))
-        or is_mostly_caps(block_text)
+        is_all_caps_line(block_text_flat) or is_mostly_caps(block_text_flat)
     )
 
     if heading_by_size or heading_by_caps:
+        # H1 if much larger than body or if CAPS; otherwise H2
         level = 1 if (avg_line_size >= body_size * 1.6) or heading_by_caps else 2
-        single = re.sub(r"\s+", " ", block_text).strip(" -:–—")
-        single = normalize_punctuation(single)
-        return [f"{'#' * level} {single}", ""]
 
-    # Paragraph(s)
+        # Heading text: use ONLY the first RAW line, not the formatted one
+        heading_raw = raw_lines[0]
+        heading_text = escape_markdown(heading_raw)
+        heading_text = re.sub(r"\s+", " ", heading_text).strip(" -:–—")
+        heading_text = normalize_punctuation(heading_text)
+        heading_line = f"{'#' * level} {heading_text}"
+
+        # If there's no additional text, just output heading + blank line
+        if len(rendered_lines) == 1:
+            return [heading_line, ""]
+
+        # Otherwise, render remaining lines as normal paragraph text
+        para_text = _fix_hyphenation("\n".join(rendered_lines[1:]))
+
+        lines: List[str] = []
+        for ln in para_text.splitlines():
+            # bullets
+            if re.match(r"^\s*([•○◦·\-–—])\s+", ln):
+                ln = re.sub(r"^\s*[•○◦·–—-]\s+", "- ", ln)
+                lines.append(ln.strip())
+                continue
+            # numbered lists
+            m_num = re.match(r"^\s*(\d+)[\.)]\s+", ln)
+            if m_num:
+                num = m_num.group(1)
+                ln = re.sub(r"^\s*\d+[\.)]\s+", f"{num}. ", ln)
+                lines.append(ln.strip())
+                continue
+            # lettered outlines → simple bullets
+            if re.match(r"^\s*[A-Za-z][\.)]\s+", ln):
+                ln = re.sub(r"^\s*[A-Za-z][\.)]\s+", "- ", ln)
+                lines.append(ln.strip())
+                continue
+            lines.append(ln)
+
+        para = _unwrap_hard_breaks(lines)
+        para = normalize_punctuation(para)
+        para = linkify_urls(para)
+        return [heading_line, "", para, ""]
+
+    # ----------------- Normal paragraph path -----------------
+
     para_text = _fix_hyphenation("\n".join(rendered_lines))
 
     lines: List[str] = []
@@ -235,6 +305,7 @@ def render_document(
 
     for i, page in enumerate(pages):
         body = body_sizes[i] if body_sizes and i < len(body_sizes) else 11.0
+
         for blk in page.blocks:
             md_lines.extend(
                 _block_to_lines(
@@ -244,8 +315,10 @@ def render_document(
                     heading_size_ratio=options.heading_size_ratio,
                 )
             )
+
         if options.insert_page_breaks and i < total - 1:
             md_lines.extend(["---", ""])  # page rule
+
         if progress_cb:
             progress_cb(i + 1, total)
 
@@ -255,8 +328,12 @@ def render_document(
     if options.defragment_short:
         md = _defragment_orphans(md, max_len=options.orphan_max_len)
 
+    # Strip common footer artefacts like trailing "- - 1" or "- -" at end of lines
+    md = re.sub(r"\s*-+\s*-+\s*\d*\s*$", "", md, flags=re.MULTILINE)
+
     # Tighten spaces before punctuation
     md = re.sub(r"\s+([,.;:?!])", r"\1", md)
+
     return md
 
 
