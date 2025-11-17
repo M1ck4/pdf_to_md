@@ -1,6 +1,6 @@
 # PDF to Markdown Converter
 
-**A refined, privacy-first desktop and CLI tool that converts PDFs—including scanned documents—into clean, structured Markdown. Built for researchers, professionals, and creators who demand accuracy, speed, and absolute data privacy.**
+**A refined, privacy first desktop and CLI tool that converts PDFs, including scanned documents into clean, structured Markdown. Built for researchers, professionals, and creators who demand accuracy, speed, and absolute data privacy.**
 
 **Fast. Local. Intelligent. Fully offline.**
 
@@ -15,12 +15,12 @@
 
 Many PDF converters silently upload documents to remote servers. **This tool does not.**
 
-* **No uploads** — your files never leave your machine
-* **No telemetry** — no usage tracking or analytics
-* **No cloud processing** — all computation happens locally
-* **No background requests** — completely offline operation
+* **No uploads:** your files never leave your machine
+* **No telemetry:** no usage tracking or analytics
+* **No cloud processing:** all computation happens locally
+* **No background requests:** completely offline operation
 
-Every step—extraction, OCR, reconstruction, and rendering—happens **locally on your machine**.
+Every step, extraction, OCR, reconstruction, and rendering, happens **locally on your machine**.
 
 ### Trusted for Sensitive Workflows
 
