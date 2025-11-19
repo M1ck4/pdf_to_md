@@ -750,14 +750,4 @@ Built with:
 
 ---
 
-## 📮 Support & Contact
-
-- **Issues:** [GitHub Issues](https://github.com/M1ck4/pdfmd/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/M1ck4/pdfmd/discussions)
-- **Email:** [Your contact if applicable]
-
----
-
-**pdfmd — Clean, structured Markdown from any PDF. Tables and equations included.**
-
 **Free. Open. Useful. Private. Always.**
