@@ -371,7 +371,7 @@ python app_gui.py
 
 #### Quick Workflow
 
-1. **Select Input PDF** — Browse or drag-and-drop
+1. **Select Input PDF** — Browse
 2. **Choose Output** — Auto-suggested `.md` file
 3. **Select Profile** — Use built-in or custom settings
 4. **Configure Options:**
