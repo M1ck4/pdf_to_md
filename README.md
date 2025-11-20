@@ -351,7 +351,7 @@ pip install pymupdf pillow pytesseract ocrmypdf
 
 ### Windows Standalone Executable
 
-Download the latest `.exe` from [Releases](https://github.com/M1ck4/pdfmd/releases) — no Python required.
+Download the latest `.exe` from [Releases](https://github.com/M1ck4/pdf_to_md/releases) — no Python required.
 
 **Note:** Tesseract must still be installed separately for OCR functionality.
 
