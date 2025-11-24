@@ -22,10 +22,10 @@ from __future__ import annotations
 from .models import Options
 from .pipeline import pdf_to_markdown
 
-__all__ = ["Options", "pdf_to_markdown"]
+__all__ = ["Options", "pdf_to_markdown", "__version__"]
 
 # Semantic version for the "Tables & Math" minor release.
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 
 def main() -> None:
@@ -33,8 +33,8 @@ def main() -> None:
 
     This allows `python -m pdfmd` to behave like running the CLI directly.
     """
-    from .cli import main as _main
-    raise SystemExit(_main())
+    from .cli import main as cli_main
+    raise SystemExit(cli_main())
 
 
 if __name__ == "__main__":
