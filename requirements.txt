@@ -1,17 +1,35 @@
 # Full installation with OCR support
 
-# Core PDF processing
+# Core PDF processing (required)
 pymupdf>=1.23.0
 
-# OCR dependencies
+# OCR dependencies (optional but recommended for OCR modes)
 pytesseract>=0.3.10
 Pillow>=10.0.0
 
+# OCRmyPDF integration (optional)
+# Uncomment the line below if you want the ocrmypdf Python package:
+# ocrmypdf>=15.0.0
+
 # Development dependencies (optional)
+# Uncomment these for development work:
 # pytest>=7.4.0
 # black>=23.0.0
 # flake8>=6.0.0
 
-# Note: External binaries must be installed separately:
-# - Tesseract OCR: https://github.com/tesseract-ocr/tesseract
-# - OCRmyPDF (optional): https://github.com/ocrmypdf/OCRmyPDF
+# ==============================================================================
+# IMPORTANT: External binaries must be installed separately
+# ==============================================================================
+# 
+# 1. Tesseract OCR (required for 'auto', 'tesseract', and 'ocrmypdf' modes):
+#    - Windows: https://github.com/UB-Mannheim/tesseract/wiki
+#    - Linux:   sudo apt-get install tesseract-ocr
+#    - macOS:   brew install tesseract
+#
+# 2. OCRmyPDF CLI tool (optional, only for 'ocrmypdf' mode):
+#    After installing Tesseract, install via:
+#    - pip install ocrmypdf
+#    OR use your system package manager
+#
+# Note: The pdfmd package will detect and use these tools automatically
+#       when available. If not installed, 'off' mode will still work.
